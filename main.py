@@ -1,5 +1,5 @@
 """
-Captador de leads inmobiliarios: Gmail -> Claude -> GoHighLevel.
+Captador de leads inmobiliarios: Gmail -> IA -> GoHighLevel.
 
 Escucha el buzon por IMAP IDLE, procesa cada correo nuevo y crea el contacto
 en GHL. No guarda nada: el estado vive en las banderas del propio IMAP.
@@ -39,8 +39,15 @@ MODELO = os.environ.get("MODELO") or (
     "gpt-4o-mini" if PROVEEDOR == "openai" else "claude-haiku-4-5-20251001"
 )
 
-GHL_TOKEN = os.environ["GHL_TOKEN"]
+# Token de respaldo. Se usa si no hay TOKEN_URL configurada, o si tracker_v1
+# no responde: es preferible seguir capturando con un token fijo que detenerse.
+GHL_TOKEN = os.environ.get("GHL_TOKEN", "").strip()
 GHL_LOCATION_ID = os.environ["GHL_LOCATION_ID"]
+
+# tracker_v1 (AutoKPI) entrega el access_token vigente y lo refresca solo.
+# Si esta vacio, se usa GHL_TOKEN tal cual.
+TOKEN_URL = os.environ.get("TOKEN_URL", "").strip()
+TOKEN_SECRET = os.environ.get("TOKEN_SECRET", "").strip()
 GHL_BASE = "https://services.leadconnectorhq.com"
 ETIQUETA = os.environ.get("GHL_TAG", "Creado_por_leadmaster")
 
@@ -321,13 +328,7 @@ def crear_contacto(datos, telefono, clave, tel_ok):
     if telefono:
         cuerpo["phone"] = telefono
 
-    r = requests.post(
-        f"{GHL_BASE}/contacts/upsert",
-        headers=_headers(),
-        json=cuerpo,
-        timeout=30,
-    )
-    r.raise_for_status()
+    r = _post_ghl(f"{GHL_BASE}/contacts/upsert", cuerpo)
     return r.json()
 
 
@@ -344,21 +345,72 @@ def crear_nota(contact_id, datos, telefono, clave, asunto):
         f"Clave interna: {clave or '— (revisar)'}",
         f"Asunto del correo: {asunto}",
     ]
-    r = requests.post(
-        f"{GHL_BASE}/contacts/{contact_id}/notes",
-        headers=_headers(),
-        json={"body": "\n".join(lineas)},
-        timeout=30,
-    )
-    r.raise_for_status()
+    _post_ghl(f"{GHL_BASE}/contacts/{contact_id}/notes", {"body": "\n".join(lineas)})
+
+
+# Token en memoria. No se pide por cada lead: eso convertiria a tracker_v1 en
+# el punto unico de falla de toda la captacion.
+_token_cache = None
+
+
+def obtener_token(forzar=False):
+    """Devuelve el access_token de GHL.
+
+    Lo pide a tracker_v1, que ya refresca solo cuando esta por expirar. Si no
+    hay TOKEN_URL, o si tracker_v1 no responde, cae al token fijo.
+    """
+    global _token_cache
+    if _token_cache and not forzar:
+        return _token_cache
+
+    if TOKEN_URL:
+        try:
+            r = requests.get(
+                TOKEN_URL,
+                params={"locationId": GHL_LOCATION_ID},
+                headers={"x-cron-secret": TOKEN_SECRET},
+                timeout=20,
+            )
+            r.raise_for_status()
+            token = (r.json() or {}).get("access_token")
+            if token:
+                _token_cache = token
+                log.info("token de GHL obtenido de tracker_v1")
+                return token
+            log.error("tracker_v1 respondio sin access_token")
+        except Exception as e:
+            log.error("no se pudo obtener el token de tracker_v1: %s", e)
+
+    if GHL_TOKEN:
+        if TOKEN_URL:
+            log.warning("usando el token de respaldo (GHL_TOKEN)")
+        _token_cache = GHL_TOKEN
+        return GHL_TOKEN
+
+    raise RuntimeError("no hay token de GHL: revisar TOKEN_URL o GHL_TOKEN")
 
 
 def _headers():
     return {
-        "Authorization": f"Bearer {GHL_TOKEN}",
+        "Authorization": f"Bearer {obtener_token()}",
         "Version": "2021-07-28",
         "Content-Type": "application/json",
     }
+
+
+def _post_ghl(url, payload):
+    """POST a GHL con un reintento si el token murio.
+
+    Un 401 no se arregla esperando: se pide token nuevo y se reintenta una
+    sola vez. Si vuelve a fallar, el problema es otro y sube como error.
+    """
+    r = requests.post(url, headers=_headers(), json=payload, timeout=30)
+    if r.status_code == 401:
+        log.warning("401 de GHL, pidiendo token nuevo y reintentando")
+        obtener_token(forzar=True)
+        r = requests.post(url, headers=_headers(), json=payload, timeout=30)
+    r.raise_for_status()
+    return r
 
 
 # --------------------------------------------------------------------------
