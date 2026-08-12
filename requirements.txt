@@ -1,0 +1,4 @@
+imapclient==3.0.1
+requests==2.32.3
+openai==1.59.6
+anthropic==0.40.0
