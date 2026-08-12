@@ -383,11 +383,23 @@ def obtener_token(forzar=False):
 
     if GHL_TOKEN:
         if TOKEN_URL:
+            # Caer al token fijo sin avisar seria peor que fallar: uno creeria
+            # que esta usando OAuth mientras lleva semanas con el token viejo.
             log.warning("usando el token de respaldo (GHL_TOKEN)")
+            enviar_alerta(
+                "el captador esta usando el token de respaldo",
+                "No se pudo obtener el token de tracker_v1 y se esta usando "
+                "GHL_TOKEN.\n\nLos leads siguen entrando, pero el token fijo "
+                "no se renueva solo. Revisar que tracker_v1 responda en "
+                f"{TOKEN_URL}",
+            )
         _token_cache = GHL_TOKEN
         return GHL_TOKEN
 
-    raise RuntimeError("no hay token de GHL: revisar TOKEN_URL o GHL_TOKEN")
+    raise SinToken(
+        "no se pudo obtener un token de GHL "
+        "(revisar TOKEN_URL/TOKEN_SECRET, o definir GHL_TOKEN)"
+    )
 
 
 def _headers():
@@ -419,6 +431,14 @@ def _post_ghl(url, payload):
 
 class FalloDefinitivo(Exception):
     """No tiene caso reintentar: el correo no sirve como lead."""
+
+
+class SinToken(Exception):
+    """No hay credencial para escribir en GHL.
+
+    No es culpa del correo, asi que no gasta intentos: se detiene la vuelta
+    entera y los correos se quedan sin leer para procesarse cuando vuelva.
+    """
 
 
 def procesar(crudo):
@@ -551,6 +571,18 @@ def procesar_pendientes(cliente):
             procesar(crudo)
             cliente.add_flags([uid], [b"\\Seen"])
             intentos.pop(uid, None)
+        except SinToken as e:
+            # Sin credencial no hay nada que hacer con NINGUN correo. Se corta
+            # la vuelta: no se marca nada leido, no se gastan intentos y nada
+            # se va a REVISAR. Cuando el token vuelva, se procesa todo.
+            log.error("%s", e)
+            enviar_alerta(
+                "el captador no puede escribir en GHL",
+                f"{e}\n\nLos leads NO se estan perdiendo: quedan sin leer en "
+                "el buzon y se procesan solos cuando se restablezca el token.",
+            )
+            return
+
         except FalloDefinitivo as e:
             # No es un lead. Es lo normal con newsletters y avisos del portal,
             # asi que no se alerta.
