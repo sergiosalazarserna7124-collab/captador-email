@@ -20,6 +20,7 @@ import time
 from email import message_from_bytes
 from email.header import decode_header, make_header
 from email.message import EmailMessage
+from urllib.parse import quote
 
 import requests
 from imapclient import IMAPClient
@@ -59,9 +60,15 @@ CF_PROYECTO = os.environ.get("CF_PROYECTO", "hMkSTQHqez2nkPqb3saH")
 # Cuantas veces se reintenta un correo antes de mandarlo a REVISAR.
 MAX_INTENTOS = int(os.environ.get("MAX_INTENTOS", "3"))
 
-# Alertas por Telegram. Va por HTTPS (443), que es lo unico que sirve aqui:
-# DigitalOcean bloquea los puertos SMTP (25/465/587) en todos sus droplets,
-# asi que mandar correo desde el servidor no es posible.
+# Alertas por WhatsApp via Evolution API. Es el canal preferido: llega al
+# telefono y NO depende de GoHighLevel, que es justo lo que puede romperse.
+# Un canal de alerta nunca debe pasar por el sistema que vigila.
+EVOLUTION_URL = os.environ.get("EVOLUTION_URL", "").strip().rstrip("/")
+EVOLUTION_INSTANCE = os.environ.get("EVOLUTION_INSTANCE", "").strip()
+EVOLUTION_APIKEY = os.environ.get("EVOLUTION_APIKEY", "").strip()
+ALERTA_WHATSAPP = os.environ.get("ALERTA_WHATSAPP", "").strip()
+
+# Alertas por Telegram. Alternativa si Evolution no esta disponible.
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
@@ -496,7 +503,9 @@ def enviar_alerta(asunto, cuerpo):
     Nunca debe tumbar el procesamiento: si el aviso falla, se registra y ya.
     """
     global _ultima_alerta
-    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID) and not ALERTA_EMAIL:
+    hay_whatsapp = bool(EVOLUTION_URL and EVOLUTION_INSTANCE and ALERTA_WHATSAPP)
+    hay_telegram = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
+    if not hay_whatsapp and not hay_telegram and not ALERTA_EMAIL:
         return
     ahora = time.time()
     if ahora - _ultima_alerta < ALERTA_MINUTOS * 60:
@@ -504,7 +513,24 @@ def enviar_alerta(asunto, cuerpo):
 
     enviada = False
 
-    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+    if hay_whatsapp:
+        try:
+            # El nombre de la instancia puede llevar espacios ("lead master
+            # reportes"), por eso va escapado en la URL.
+            r = requests.post(
+                f"{EVOLUTION_URL}/message/sendText/{quote(EVOLUTION_INSTANCE)}",
+                headers={"apikey": EVOLUTION_APIKEY,
+                         "Content-Type": "application/json"},
+                json={"number": ALERTA_WHATSAPP, "text": f"⚠️ {asunto}\n\n{cuerpo}"},
+                timeout=25,
+            )
+            r.raise_for_status()
+            enviada = True
+            log.info("alerta enviada por WhatsApp")
+        except Exception as e:
+            log.error("no se pudo enviar la alerta por WhatsApp: %s", e)
+
+    if hay_telegram and not enviada:
         try:
             r = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
