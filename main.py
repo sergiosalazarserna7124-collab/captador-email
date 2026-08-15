@@ -200,6 +200,21 @@ en el campo "E-mail:" del cuerpo.
 El correo puede traer un bloque "---------- Forwarded message ---------" \
 (reenvio manual) o no traerlo (reenvio automatico). Ambos son validos.
 
+Hay tres formatos, los tres son leads validos:
+
+1. INMUEBLES24 / VIVANUNCIOS: asunto tipo "¡Consultaron tu WhatsApp en el \
+aviso ...! COD:EB-XXNNNN". Los datos van bajo "Datos del interesado".
+
+2. MERCADO LIBRE: asunto "Te contactaron en ...". Los datos van bajo "Datos \
+de la persona interesada".
+
+3. EASYBROKER / BOLSA INMOBILIARIA: asunto "Solicitud desde Bolsa \
+Inmobiliaria: EB-XXNNNN ..." y remitente @inbox.easybroker.com. Los datos van \
+bajo "=== Enviado por: ===". Aqui quien escribe es un ASESOR DE OTRA \
+INMOBILIARIA preguntando por un inmueble para su cliente: **es un lead valido \
+igual**, es_lead debe ser true. Su nombre, correo y telefono son los del \
+bloque "Enviado por".
+
 Esquema:
 {
   "es_lead": true,
@@ -218,19 +233,26 @@ Reglas:
 - codigo_propiedad es el codigo del anunciante con formato EB-XXNNNN (aparece
   como "COD:EB-UW5094"). NO es el "Codigo de aviso" numerico.
 - clave_interna: el texto entre las dos barras verticales del titulo del aviso
-  ("Oficina Sobre Av Libano | Jrml |" -> "Jrml"). Si el titulo aparece cortado
-  con "..." o no tiene barras, devuelve null. NO la deduzcas del nombre del
-  asesor ni de ninguna otra parte del correo.
+  ("Oficina Sobre Av Libano | Jrml |" -> "Jrml"). Puede estar en el asunto o en
+  el cuerpo: en los correos de EasyBroker el titulo completo va en el cuerpo
+  ("CASA EN SOLUNA EN RENTA | GAC |" -> "GAC"). Busca en los dos lados. Si el
+  titulo aparece cortado con "..." o no tiene barras, devuelve null. NO la
+  deduzcas del nombre del asesor ni de ninguna otra parte del correo.
+- nombre: si viene vacio, con un guion "-" o solo signos de puntuacion,
+  devuelve null. No inventes un nombre a partir del correo.
 - telefono: si hay varios del mismo prospecto, devuelve el mas completo: el de
   12 digitos que empieza en 52 gana sobre el de 10.
 - portal: el sitio que origino la consulta (Inmuebles24, Mercado Libre,
   EasyBroker, Propiedades.com...). Los correos que llegan desde
   @usuarios.vivanuncios.com.mx usan la plantilla de Inmuebles24: devuelve
-  "Inmuebles24".
+  "Inmuebles24". Los de @inbox.easybroker.com: devuelve "EasyBroker".
 - mensaje: el texto que escribio el prospecto, si lo hay. Solo su mensaje, no
   el texto de plantilla del portal.
-- es_lead: false si el correo no es la consulta de un prospecto por un inmueble
-  (newsletters, facturacion, avisos del portal)."""
+- es_lead: false SOLO si el correo no es una consulta por un inmueble
+  (newsletters, facturacion, avisos del portal, notificaciones de sistema).
+  Ante la duda, si hay un inmueble identificado y datos de contacto de quien
+  pregunta, es_lead es true. Que quien escriba sea otro asesor inmobiliario y
+  no un consumidor final NO lo descalifica."""
 
 
 def extraer_datos(asunto, remitente, cuerpo):
