@@ -19,6 +19,7 @@ import sys
 import time
 from email import message_from_bytes
 from email.header import decode_header, make_header
+from datetime import datetime
 from email.message import EmailMessage
 from urllib.parse import quote
 
@@ -59,6 +60,9 @@ CF_PROYECTO = os.environ.get("CF_PROYECTO", "hMkSTQHqez2nkPqb3saH")
 
 # Cuantas veces se reintenta un correo antes de mandarlo a REVISAR.
 MAX_INTENTOS = int(os.environ.get("MAX_INTENTOS", "3"))
+
+# Ventana para considerar que una nota del mismo inmueble ya esta puesta.
+VENTANA_NOTA_HORAS = int(os.environ.get("VENTANA_NOTA_HORAS", "6"))
 
 # Alertas por WhatsApp via Evolution API. Es el canal preferido: llega al
 # telefono y NO depende de GoHighLevel, que es justo lo que puede romperse.
@@ -361,6 +365,41 @@ def crear_contacto(datos, telefono, clave, tel_ok):
     return r.json()
 
 
+def nota_repetida(contact_id, codigo):
+    """True si ya hay una nota reciente por el mismo inmueble.
+
+    El mismo lead puede llegar dos veces (reenvio manual + automatico): son
+    correos distintos, con Message-ID distinto, asi que los dos se procesan.
+    El contacto no se duplica porque el upsert lo actualiza, pero la nota si.
+    Se consulta a GHL en vez de guardar estado local: la fuente de verdad es
+    lo que ya esta escrito en el contacto.
+    """
+    if not codigo:
+        return False
+    try:
+        r = requests.get(
+            f"{GHL_BASE}/contacts/{contact_id}/notes",
+            headers=_headers(),
+            timeout=20,
+        )
+        r.raise_for_status()
+        limite = time.time() - VENTANA_NOTA_HORAS * 3600
+        for n in (r.json() or {}).get("notes", []):
+            if codigo not in (n.get("body") or ""):
+                continue
+            fecha = (n.get("dateAdded") or "").replace("Z", "+00:00")
+            try:
+                if datetime.fromisoformat(fecha).timestamp() >= limite:
+                    return True
+            except ValueError:
+                continue
+    except Exception as e:
+        # Ante la duda, se escribe la nota: una nota repetida molesta menos
+        # que perder el contexto de un lead.
+        log.warning("no se pudo revisar notas previas: %s", e)
+    return False
+
+
 def crear_nota(contact_id, datos, telefono, clave, asunto):
     """Deja el contexto del correo en el contacto, para que el asesor vea de
     donde salio el lead sin tener que buscar el correo original."""
@@ -499,7 +538,11 @@ def procesar(crudo):
     # importa. No tumbamos el procesamiento por esto.
     if contacto.get("id"):
         try:
-            crear_nota(contacto["id"], datos, telefono, clave, asunto)
+            if nota_repetida(contacto["id"], datos.get("codigo_propiedad")):
+                log.info("nota omitida: ya hay una reciente por %s",
+                         datos.get("codigo_propiedad"))
+            else:
+                crear_nota(contacto["id"], datos, telefono, clave, asunto)
         except Exception as e:
             log.warning("contacto %s creado pero la nota fallo: %s",
                         contacto["id"], e)
