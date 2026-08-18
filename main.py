@@ -212,12 +212,15 @@ aviso ...! COD:EB-XXNNNN". Los datos van bajo "Datos del interesado".
 2. MERCADO LIBRE: asunto "Te contactaron en ...". Los datos van bajo "Datos \
 de la persona interesada".
 
-3. EASYBROKER / BOLSA INMOBILIARIA: asunto "Solicitud desde Bolsa \
-Inmobiliaria: EB-XXNNNN ..." y remitente @inbox.easybroker.com. Los datos van \
-bajo "=== Enviado por: ===". Aqui quien escribe es un ASESOR DE OTRA \
-INMOBILIARIA preguntando por un inmueble para su cliente: **es un lead valido \
-igual**, es_lead debe ser true. Su nombre, correo y telefono son los del \
-bloque "Enviado por".
+3. EASYBROKER: asunto "Solicitud desde <PORTAL>: EB-XXNNNN ..." y \
+remitente @inbox.easybroker.com. El <PORTAL> varia: Bolsa Inmobiliaria, \
+Pincali, Mercado Libre, y otros que puedan aparecer. **Todos son el mismo \
+formato y todos son leads validos.** Los datos van bajo "=== Enviado por: \
+===": nombre, correo y a veces telefono (puede no venir telefono, y esta \
+bien). Quien escribe puede ser un consumidor final o un ASESOR DE OTRA \
+INMOBILIARIA preguntando para su cliente: en ambos casos es_lead es true. \
+En este formato el titulo completo del inmueble va en el CUERPO, con la \
+clave entre barras, con o sin espacios: "| AML |" o "|CRA|".
 
 Esquema:
 {
