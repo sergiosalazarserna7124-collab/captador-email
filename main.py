@@ -61,6 +61,20 @@ CF_PROYECTO = os.environ.get("CF_PROYECTO", "hMkSTQHqez2nkPqb3saH")
 # Cuantas veces se reintenta un correo antes de mandarlo a REVISAR.
 MAX_INTENTOS = int(os.environ.get("MAX_INTENTOS", "3"))
 
+# Dominios de los portales. Lo que no venga de aqui no llega al modelo: no
+# tiene sentido pagar tokens para que una IA descarte un correo de bienvenida
+# de Google. Vacio = no filtrar.
+DOMINIOS_PERMITIDOS = [
+    d.strip().lower()
+    for d in os.environ.get(
+        "DOMINIOS_PERMITIDOS",
+        "usuarios.inmuebles24.com,usuarios.vivanuncios.com.mx,"
+        "inbox.easybroker.com,mercadolibre.com,remax.com.mx,expmexico.mx,"
+        "thesmartflat.com,heyhom.mx,tokkobroker.com,propiedades.com",
+    ).split(",")
+    if d.strip()
+]
+
 # Ventana para considerar que una nota del mismo inmueble ya esta puesta.
 VENTANA_NOTA_HORAS = int(os.environ.get("VENTANA_NOTA_HORAS", "6"))
 
@@ -174,6 +188,28 @@ def extraer_texto(msg):
     if html:
         return html_a_texto(html)
     return plano or ""
+
+
+def remitente_permitido(msg, cuerpo):
+    """Filtro barato antes de gastar tokens.
+
+    El reenvio automatico de Gmail conserva el remitente original, asi que
+    basta con mirar el From. En un reenvio MANUAL el From es quien reenvia,
+    pero el original queda citado en el cuerpo: por eso se busca tambien ahi
+    antes de descartar.
+    """
+    if not DOMINIOS_PERMITIDOS:
+        return True
+
+    frm = decodificar(msg.get("From")).lower()
+    m = re.search(r"@([\w.-]+)", frm)
+    if m:
+        dom = m.group(1).rstrip(">").strip()
+        if any(dom == d or dom.endswith("." + d) for d in DOMINIOS_PERMITIDOS):
+            return True
+
+    muestra = (decodificar(msg.get("Subject")) + " " + cuerpo[:4000]).lower()
+    return any(d in muestra for d in DOMINIOS_PERMITIDOS)
 
 
 # --------------------------------------------------------------------------
@@ -321,15 +357,24 @@ def normalizar_telefono(valor):
 
 
 def validar_clave(valor):
-    """Comparacion exacta contra la lista, en mayusculas.
+    """Devuelve la clave tal como aparece en el aviso.
 
-    Nunca por substring: RML esta contenido en JRML y cada lead de Juan
-    Ricardo terminaria tambien en la cuenta de Rocio.
+    No se valida contra la lista: si el titulo dice "| Ijv |", se escribe IJV
+    aunque el asesor este dado de alta como IJVP. Corregir eso es trabajo del
+    aviso, no del captador, y adivinar el parecido meteria leads en la cuenta
+    equivocada.
+
+    La lista CLAVES queda solo para avisar en el log cuando aparece una
+    desconocida, que casi siempre es un aviso mal publicado.
     """
     if not valor:
         return None
     token = re.sub(r"[^A-Za-z]", "", valor).upper()
-    return token if token in CLAVES else None
+    if not 2 <= len(token) <= 6:
+        return None
+    if token not in CLAVES:
+        log.warning("clave '%s' no esta en la lista de asesores conocidos", token)
+    return token
 
 
 # --------------------------------------------------------------------------
@@ -529,6 +574,9 @@ def procesar(crudo):
 
     if not cuerpo.strip():
         raise FalloDefinitivo("correo sin cuerpo legible")
+
+    if not remitente_permitido(msg, cuerpo):
+        raise FalloDefinitivo("remitente fuera de la lista de portales")
 
     datos = extraer_datos(asunto, remitente, cuerpo)
 
