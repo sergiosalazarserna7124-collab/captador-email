@@ -222,6 +222,13 @@ INMOBILIARIA preguntando para su cliente: en ambos casos es_lead es true. \
 En este formato el titulo completo del inmueble va en el CUERPO, con la \
 clave entre barras, con o sin espacios: "| AML |" o "|CRA|".
 
+4. RE/MAX MEXICO: asunto "Nuevo Contacto de RE/MAX", remitente \
+contacto@remax.com.mx. Los datos van bajo "Informacion de tu nuevo contacto": \
+Nombre, Email, Telefono, "Clave de la propiedad" y Comentario. Aqui NO hay \
+codigo EB- ni clave entre barras: usa la "Clave de la propiedad" (formato \
+tipo RCR685327-467) como codigo_propiedad, y clave_interna queda null. El \
+Email suele venir vacio y solo hay telefono: es un lead valido igual.
+
 Esquema:
 {
   "es_lead": true,
@@ -238,7 +245,9 @@ Esquema:
 Reglas:
 - Si un dato no aparece, null. No inventes ni infieras.
 - codigo_propiedad es el codigo del anunciante con formato EB-XXNNNN (aparece
-  como "COD:EB-UW5094"). NO es el "Codigo de aviso" numerico.
+  como "COD:EB-UW5094"). NO es el "Codigo de aviso" numerico. Excepcion: en
+  los correos de RE/MAX Mexico no existe ese codigo; ahi se usa el valor de
+  "Clave de la propiedad" (por ejemplo RCR685327-467).
 - clave_interna: el texto entre las dos barras verticales del titulo del aviso
   ("Oficina Sobre Av Libano | Jrml |" -> "Jrml"). Puede estar en el asunto o en
   el cuerpo: en los correos de EasyBroker el titulo completo va en el cuerpo
